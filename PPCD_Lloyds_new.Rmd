@@ -1,0 +1,338 @@
+---
+title: "TMA Access legitimacy report on Pinpoint Detect live alerts"
+author: "Alan Kelly"
+date: "2019, IBM and Lloyds Confidential"
+output:
+  word_document: default
+  html_document: default
+---
+
+This data is downloaded from the PPCD Access Legitimacy report in the TMA.  Note that high risk alerts are those with recommendation = "allow login and restrict".
+  
+```{r, fig.width=14, fig.height=7, echo=FALSE}
+library(ggplot2)
+library(tidyr)
+library(ggvis)
+library(imputeTS)
+library(zoo)
+library(treemap)
+suppressPackageStartupMessages(library(plyr))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(lubridate))
+data<-read.csv("lloydsmar.csv",header=T,stringsAsFactors=F)
+
+data$Event.Date<-gsub("-","/",data$Event.Date)
+data$Event.Date<-ymd_hms(data$Event.Date)
+data$Date<-date(data$Event.Date)
+data$Day<-mday(data$Event.Date)
+data$Month<-month(data$Event.Date,label=TRUE)
+data$Year<-year(data$Event.Date)
+data$Week<-week(data$Event.Date)
+nweeks<-round(as.numeric((max(data$Event.Date)-min(data$Event.Date))/7),0)
+i<-gregexpr(".*A QA test.*",data$Risk.Reason)
+data<-data[i==-1,]  # i is an index of all matches. -1 indicates no match
+# data<-data[data$Recommendation=="Allow Login and Restrict",]
+data1<-data
+data1<-data1[data1$Date > "2019-08-01",]
+# data1<-data1[grep("business", data1$Application), ]
+# data1<-data1[grep("halifax_retail", data1$Application), ]
+data1<- data[data$Application== "lloydstsb_tbtsoc" | data$Application== "lloydstsb_tbtsoc_bos", ]
+# dataCBO<- data[data$Application== "lloydstsb_tbtsoc" | data$Application== "lloydstsb_tbtsoc_bos", ]
+# data1<-rbind(data1,dataCBO)
+## next line to filter on RAT only.
+# data1<-data1[grep("Suspicious access using a remote access tool", data1$Risk.Reason), ]
+# data1<-data1[grep("Suspicious Behavioral Anomaly", data1$Risk.Reason), ]
+# data1<-data1[grep(".*A QA test.*", data1$Risk.Reason), ]
+apps<-unique(data1$Application)
+nrow(data1)
+## table(data1$Month)
+totalalerts <- nrow(data1)
+lastday<-data1[data1$Event.Date == max(data1$Event.Date),]
+finalmonth<-lastday$Month
+finalday<-lastday$Day
+firstday<-data1[data1$Event.Date == min(data1$Event.Date),]
+firstmonth<-firstday$Month
+firstday<-firstday$Day
+
+x<-table(data1$Activity.Confirmation)
+percentfraud<- round((x[1]/sum(x))*100,1)
+overallTPrate<-round((x[1]/sum(x[1:2]))*100,1)
+
+data1$Day<-wday(data1$Event.Date,label=TRUE)
+dailyaverage<-tbl_df(data1) %>%
+  group_by(Day) %>%
+  summarise(day_average=round(n()/nweeks,1))
+
+box<-tbl_df(data1) %>%
+  group_by(Week,Day) %>%
+  summarise(day_sum=round(n(),1)) %>%
+  spread(Day,day_sum)
+
+# section below is to replace data2 with a df that includes rows with 0.
+# ts is needed to insert rows where all variables in the row are 0. This needs to be manually updated as the range increases
+# if another application is added, then the replace_na needs updating
+# the length of df needs to match the date range in x.
+ts <- seq(as.Date("2020-03-01"),as.Date("2020-03-31"), by = "days")
+df <- data.frame(Date=ts)
+
+x<-data1[,c("Date", "Application")]
+x<-x[x$Date > "2020-03-01",]
+x<-tbl_df(x) %>%
+  group_by(Date, Application) %>%
+  summarise(Count=n()) %>%
+  spread(Application,Count) %>%
+  full_join(df) %>%
+  gather(Application, Count, -Date) %>%
+  group_by(Date,Application) 
+ x$Count<-na.replace(x$Count, 0) ## some apps will have 0 alert, these are NAs and  need to set to 0
+
+z<-x %>%
+  group_by(Date) %>%
+  summarise(Daily_Total=sum(Count)) 
+ z$rollavg = rollmean(z$Daily_Total, 14,fill=NA,align="right")
+
+data2<-data1[,c("Recommendation","Risk.Reason" ,"Risk.Score","Application","Date","Activity.Confirmation", "Activity","Day","Week","Month")]
+data2$Risk.Reason<- as.factor(data2$Risk.Reason) 
+data2$Activity.Confirmation<-gsub(" ","_", data2$Activity.Confirmation) 
+if(!"Confirmed_Fraud" %in% data2$Activity.Confirmation) {Confirmed_Fraud=0}
+if(!"Confirmed_Legitimate" %in% data2$Activity.Confirmation) {Confirmed_Legitimate=0}
+
+dailyaverage<-tbl_df(data2) %>%
+  group_by(Day) %>%
+  summarise(day_average=round(n()/nweeks,1))
+
+data3<-tbl_df(data2) %>%
+  group_by(Risk.Reason, Risk.Score,Activity.Confirmation) %>%
+  summarise(count=n())  %>%
+  spread(Activity.Confirmation, count,fill=0) %>%
+  mutate(TPrate = round(Confirmed_Fraud / (Confirmed_Fraud + Confirmed_Legitimate+Pending),2))
+ 
+# calculate the TP rate per risk reason per week
+data5<-tbl_df(data2) %>%
+  group_by(Risk.Reason,Activity.Confirmation, Week) %>%
+  summarise(count=n())  %>%
+  spread(Activity.Confirmation, count,fill=0) %>%
+  mutate(TPrate = round(Confirmed_Fraud / (Confirmed_Fraud + Confirmed_Legitimate+Pending),3))
+
+# calculate the TP rate per month
+data6<-tbl_df(data2) %>%
+  group_by(Activity.Confirmation, Month) %>%
+  summarise(count=n())  %>%
+  spread(Activity.Confirmation, count,fill=0) %>%
+  mutate(TPrate = round(Confirmed_Fraud / (Confirmed_Fraud + Confirmed_Legitimate)*100,2))
+
+# Treemap Risk.Reasons
+data11<-tbl_df(data2) %>%
+  group_by(Risk.Reason) %>%
+  summarise(count=n()) 
+
+```
+
+The total number of alerts in the graphics below is `r totalalerts`. This includes all alerts for the applications `r apps` from `r firstmonth` `r firstday` till `r finalmonth` `r finalday`.
+The overall percentage of confirmed fraudulent alerts in this data is `r percentfraud`%. The number of "pending" alerts means that the actual figure for confirmed fraudulent alerts may be higher. The overall True Positive rate is `r overallTPrate`%, this excludes "pending" alerts.
+
+```{r, fig.width=14, fig.height=7, echo=FALSE}
+
+g1<-ggplot(data1, aes(Month,fill=Activity.Confirmation))
+g1+ geom_bar(position=position_dodge(width=0.5),alpha=0.8)+
+  labs(title="Count of Alerts per Application by Activity Confirmation status")+labs(x ="Month", y = "count")+
+  theme(axis.text.x=element_text(angle=0))+
+  theme(legend.title = element_blank())+
+  facet_grid(.~Application)+
+  theme(title=element_text(size=25,face="bold"))
+
+
+```
+  
+  The following plots the same data as above showing cumulative alerts per day.  
+
+```{r, fig.width=14, fig.height=10, echo=FALSE}
+
+g3<-ggplot(data1, aes(Date,fill=Application))
+g3+ geom_bar(width=0.75)+
+  labs(title="Cumulative Daily alerts")+labs(x ="Date", y = "count")+
+  theme(axis.text.x=element_text(angle=-90))+
+  scale_x_date(date_breaks= "day")+
+  theme(title=element_text(size=25,face="bold"))
+
+g3<-ggplot(data1, aes(Date,fill=Risk.Reason))
+g3+ geom_bar(width=0.75)+
+  labs(title="Cumulative Daily alerts")+labs(x ="Date", y = "count")+
+  theme(axis.text.x=element_text(angle=-90))+
+  scale_x_date(date_breaks= "day")+
+  theme(title=element_text(size=25,face="bold"))
+
+## the width is set above to overcome a bug in geom_bar handling of date objects
+```
+  
+## Daily Count of alerts with 28 Day rolling average   
+  
+```{r,fig.width=18,fig.height=10,echo=FALSE}
+
+g3<-ggplot(z, aes(x=Date,y=Daily_Total,group=1))
+g3 + geom_line(position = "identity")+
+  labs(title="Daily Count of alerts with 14 day rolling average")+labs(x ="Date", y = "Count")+
+  theme(axis.text.x=element_text(angle=-90))+
+  theme(legend.position="bottom")+theme(legend.title = element_blank())+
+  theme(legend.text=element_text(size=15))+
+  geom_line(aes(y=rollavg),size=2,colour="red")+
+  scale_x_date(date_breaks= "day")+
+  theme(title=element_text(size=25,face="bold"))
+
+dailyaverage
+```
+
+
+## Count of alerts for all applications per day of week  
+The boxplot shows the distribution of a count of all alerts for each day of the week i.e Each datapoint in the graph entitled "Sun" is a total count of all alerts for each Sunday in 2017. The red triangle marks the count for that day in the most recent week.
+```{r,dev.args=list(pointsize=12),echo=FALSE}
+par(mfrow=c(2,4))
+n=nrow(box)
+for (i in 2:8) {
+  boxplot(box[,i], main=names(box[i]), type="l",xlab="count of alerts")
+  stripchart(box[,i],vertical=TRUE,method="jitter",add=TRUE,pch=10,col="steelblue")
+  stripchart(box[n,i],vertical=TRUE,add=TRUE,pch=25,col="red")
+}
+
+```
+   
+## Daily count of Alerts per application
+The following chart looks at the trend of total alerts per day per application. Note that days with 0 alerts are not plotted.
+
+```{r, fig.width=18, fig.height=10, echo=FALSE}
+
+g2<-ggplot(x, aes(x=Date,y=Count, colour=Application,group=Application))
+g2 + geom_line(position = "identity")+
+  labs(title="Daily Alerts per Application per Day")+labs(x ="Date", y = "Count")+
+  theme(legend.position="bottom")+theme(legend.title = element_blank())+
+  theme(legend.text=element_text(size=15))+
+  theme(axis.text.x=element_text(angle=-90))+
+  scale_x_date(date_breaks= "day")+
+  theme(title=element_text(size=25,face="bold"))
+
+```
+  
+## Alerts by Risk Score, Risk Reason, Activity Confirmation and Recommendation
+
+```{r, fig.width=14, fig.height=7, echo=FALSE}
+
+#g1<-ggplot(data1, aes(Date,fill=Activity.Confirmation))
+#g1+ geom_bar(width=0.5,alpha=0.8)+
+ # labs(title="Alerts per Application")+labs(x ="Date", y = "Alert count")+
+ # theme(legend.position="bottom")+theme(legend.title = element_blank())+
+ # theme(legend.text=element_text(size=15))+
+ # theme(axis.text.x=element_text(angle=-90))+
+ # scale_x_date(date_breaks= "day")+
+ # facet_grid(Application~.)+
+ # theme(title=element_text(size=25,face="bold"))
+
+# app<-data1[data1$Application== "lloydstsb_tbtsoc" | data1$Application== "lloydstsb_tbtsoc_bos", ]
+# above is useful to graph particular apps
+```
+```{r, fig.width=14, fig.height=10, echo=FALSE}
+
+g1<-ggplot(data1, aes(x=Date,y=Risk.Score,col=Risk.Reason))
+g1+ geom_point(alpha=0.2)+
+  geom_jitter()+
+  labs(title="Alerts by Risk Score, Risk Reason and Date")+labs(x ="Date", y = "Risk Score")+
+  theme(plot.title = element_text(size=20))+
+  theme(axis.text.x=element_text(angle=-90))+
+  theme(axis.text=element_text(size=15))+
+  ##theme(legend.title = element_blank())+
+  theme(legend.text = element_text(size=10))+
+  theme(axis.title=element_text(size=15,face="bold"))
+
+
+```
+
+##  Alerts by Activity
+
+
+```{r, fig.width=14, fig.height=10, echo=FALSE}
+
+g1<-ggplot(data2, aes(Activity))
+g1+ geom_bar(width=0.5,alpha=0.8)+
+  labs(title="Alerts by Activity")+labs(x ="Activity", y = "Alert count")+
+  theme(legend.position="bottom")+theme(legend.title = element_blank())+
+  theme(axis.text=element_text(size=20))+
+  theme(axis.text.x=element_text(angle=0))+
+  theme(axis.title=element_text(size=25,face="bold"))+
+  theme(title=element_text(size=25,face="bold"))
+
+```  
+
+##  Alert Detail  
+
+```{r, fig.width=14, fig.height=10, echo=FALSE}
+
+
+knitr::kable(data3)
+#View(data3)
+```
+
+
+```{r, fig.width=14, fig.height=10, echo=FALSE}
+
+
+## library(Gmisc)
+## htmlTable(as.matrix(data5),rname=FALSE,col.rgroup = c("none", "#F7F7F7"), n.rgroup = rep(1, nrow(data5)))
+
+```
+
+## Day to Day comparison - all alerts 
+
+```{r, fig.width=14, fig.height=10, echo=FALSE}
+
+data9<- data[data$Day==24 & data$Month=="Mar",]
+data8<- data[data$Day==17 & data$Month=="Mar",]
+data7<-rbind(data9,data8)
+data7$Day<-as.factor(data7$Day)
+g1<-ggplot(data7, aes(Day,fill=Day))
+g1+ geom_bar(position=position_dodge(width=0.5),alpha=0.8)+
+  labs(title="Compare Alerts per Application")+labs(x ="Day", y = "count")+
+  theme(axis.text.x=element_text(angle=0))+
+  theme(legend.title = element_blank())+
+  facet_grid(.~Application)
+
+data7$hr<-hour(data7$Event.Date)
+data6<-tbl_df(data7) %>%
+  group_by(hr,Day) %>%
+  summarise(count=n())
+g1<-ggplot(data6, aes(x=hr,y=count,fill=Day))
+g1+ geom_bar(stat="identity")+
+  labs(title="Cummulative Alerts per hour")+labs(x ="hour", y = "Cumulative Alerts")+
+  theme(axis.text.x=element_text(angle=0))+
+  scale_x_continuous(breaks=c(0:23))+
+  facet_grid(.~Day)
+
+
+```
+
+##  Distribution of alert scores per week by Risk Reason  
+The TP rate includes the Pending alerts (different to the overall calculation)  
+
+```{r, fig.width=14, fig.height=10, echo=FALSE}
+
+#g1<-ggplot(data5, aes(Week,TPrate, color=factor(Risk.Reason),group= Risk.Reason))
+#g1+ geom_line(position = "identity", size=3)+
+#  labs(title="Risk reason by TP rate and Time")+labs(x ="Week", y = "TP rate")+
+ # theme(axis.text=element_text(size=20))+
+ # theme(axis.text.x=element_text(angle=0))+
+ # theme(axis.title=element_text(size=25,face="bold"))+
+ # theme(title=element_text(size=25,face="bold"))
+
+# data55<-data5[data5$Risk.Reason=="Suspicious access using a remote access tool",]
+# data56<-data5[data5$Risk.Reason=="Two subsequent logins from different geographical locations within a short timeframe",]
+# data57<-data5[data5$Risk.Reason=="Unusual activity from a new device using a hosting service",]
+# data58<-rbind(data55,data56,data57)
+
+knitr::kable(data5)
+
+
+treemap(data11,lab = c(TRUE, TRUE),index = c("Risk.Reason"), vSize ="count", title = "Treemap of Risk Reasons", fontsize.labels = 18)
+  
+``` 
+
+
+
+
