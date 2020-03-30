@@ -36,7 +36,7 @@ data1<-data
 data1<-data1[data1$Date > "2019-08-01",]
 # data1<-data1[grep("business", data1$Application), ]
 # data1<-data1[grep("halifax_retail", data1$Application), ]
-data1<- data[data$Application== "lloydstsb_tbtsoc" | data$Application== "lloydstsb_tbtsoc_bos", ]
+# data1<- data[data$Application== "lloydstsb_tbtsoc" | data$Application== "lloydstsb_tbtsoc_bos", ]
 # dataCBO<- data[data$Application== "lloydstsb_tbtsoc" | data$Application== "lloydstsb_tbtsoc_bos", ]
 # data1<-rbind(data1,dataCBO)
 ## next line to filter on RAT only.
