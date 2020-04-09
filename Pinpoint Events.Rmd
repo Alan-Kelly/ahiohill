@@ -30,7 +30,7 @@ data$Day<-wday(data$Event.Date,label=TRUE)
 data$mday<-mday(data$Event.Date)
 data$Month<-month(data$Event.Date,label=TRUE)
 data$Year<-year(data$Event.Date)
-# data<-data[!duplicated(data$User.IP), ] 
+data<-data[!duplicated(data$User.IP), ] 
 
 data1<-data  # [data$Month=="Mar",]
 # data1<-data1[data1$mday== 1,]  # used to filter on a particular day in a month
