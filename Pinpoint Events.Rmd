@@ -1,0 +1,203 @@
+---
+title: "PPMD Infection Alerts"
+author: "Alan Kelly"
+date: '2019'
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+always_allow_html: yes
+---
+### IBM Confidential
+
+This is from the Infection Events TMA report download. All Pumba and Simba events have been removed as these are mock malware test events. The data is deduplicated based on the first customer session ID (CSID) captured in the user journey.
+The first table is the total number of events per year.  
+The second table below is the total number of events per month. The barchart is the same data.
+
+```{r, fig.width=10, fig.height=12, echo=FALSE}
+library(ggplot2)
+library(ggthemes)
+
+suppressPackageStartupMessages(library(readr))
+suppressPackageStartupMessages(library(plyr))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(lubridate))
+data<-read.csv("lloyds2020.csv",header=T,stringsAsFactors=F)
+nrow(data)
+data$Event.Date<-gsub("-","/",data$Event.Date)
+data$Event.Date<-ymd_hms(data$Event.Date)
+data$Day<-wday(data$Event.Date,label=TRUE)
+data$mday<-mday(data$Event.Date)
+data$Month<-month(data$Event.Date,label=TRUE)
+data$Year<-year(data$Event.Date)
+# data<-data[!duplicated(data$User.IP), ] 
+
+data1<-data  # [data$Month=="Mar",]
+# data1<-data1[data1$mday== 1,]  # used to filter on a particular day in a month
+data1<-subset(data1, ! grepl("Pumba",Malware))
+data1<-subset(data1, ! grepl("Simba",Malware))
+# data1<-subset(data1, ! (Application == "bank_of_scotland_retail" & Malware == "Zeus" & Month =="Jan"))
+# data1<- data1[data1$Application== "lloydstsb_tbtsoc" | data1$Application== "lloydstsb_tbtsoc_bos", ]
+CSID_all<- strsplit(data1$Customer.Session.ID,",") # creates a list of all CSIDs
+data1$CSID1<-as.character(lapply(CSID_all,"[",1))   # saves the first component in each element
+
+empty <- is.na(data1$CSID1)    # some SanUK CSID are blank, so writing in Event.ID
+data1$CSID1[empty] <- data1$Event.ID[empty]
+data1<-data1[!duplicated(data1$CSID1), ] #  Lloyds dedup based on CSID
+data1<-data1[!duplicated(data1$Event.ID), ]  # SanUK dedup based on Event.ID
+data1$Year<-as.factor(data1$Year)
+
+login<-grep("[Ll]ogin",data$Detected.at.full.URL)
+logon<-grep("[Ll]ogon",data$Detected.at.full.URL)
+l<-length(unique(c(login,logon)))
+percent_logon<- l/nrow(data)*100
+
+t<-data.frame(table(data1$Malware))  # find top Malware
+t<-t[order(t$Freq,decreasing=TRUE),]
+topmalware<-t[1,1]
+data2<-data1[data1$Malware==topmalware,]
+
+data4<-data1[!data1$Encrypted.User.Id=="",]
+idx <- duplicated(data4$Encrypted.User.Id) | duplicated((data4$Encrypted.User.Id),fromLast = TRUE) # creates index of all rows which have a duplicate.
+data5<-data4[idx, ] 
+
+
+table(data1$Year)
+table(data1$Month)
+  
+
+## extract all occurances of Trickbot in the Malware column.
+r<-regexpr("^Trickbot",data1$Malware) 
+SpecMal<-data1[r==1,]
+
+## data2 is used to look at the trend/day after a certain date
+
+table(data1$Month)
+# plot(data1$Month)
+library(ggvis)
+data1 %>% ggvis(~Month) %>% layer_bars()
+
+g1<-ggplot(data1, aes(Month))
+g1+ geom_bar(aes())+
+  labs(title="Malware Detection Events")+labs(x ="Month", y = "count")+
+  theme(axis.text.x=element_text(angle=-90))+
+  theme(legend.title = element_blank())+
+   facet_grid(. ~ Application)
+
+
+```
+  
+The table above shows the total events per month and per Application.  
+The table below is the same data in a different format, the events per month are cumulative across all applications.
+The percentage of detections on a url containing "logon" or "login" is `r percent_logon` %.
+ ```{r, echo=FALSE}
+
+g1<-ggplot(data1, aes(Month,fill=Application))
+g1+ geom_bar(aes())+
+  labs(title="Malware Detection Events")+labs(x ="Month", y = "count")+
+  theme(axis.text.x=element_text(angle=-90))
+  
+```
+  
+The table below shows the total events by browser type.
+
+```{r, echo=FALSE}
+
+g1<-ggplot(data1, aes(Browser))
+g1+ geom_bar(aes(),fill="blue")+
+  labs(title="Browser Data ")+labs(x ="Browser type", y = "count")+
+  theme(axis.text.x=element_text(angle=-90))
+
+```
+  
+### Malware with the most events
+
+The following finds the Malware with the most events, extracts those events and plots them per month.
+
+
+```{r, echo=FALSE}
+
+g2<-ggplot(data2, aes(Month,fill=Application))
+g2+ geom_bar(aes())+
+  labs(title=paste("Malware = ",topmalware,sep=""))+labs(x ="Month", y = "count")+
+  theme(axis.text.x=element_text(angle=-90))
+##  theme(legend.title = element_blank())
+
+```
+  
+### Malware Frequency  
+A table follows with all Malware and the associated frequency of those events.
+```{r,  fig.width=14, fig.height=10, echo=FALSE}
+
+knitr::kable(t)
+
+## extract all occurances of Ramnit in the Malware column.
+# r<-grep(" Ramnit",data$Malware) 
+# x<-data[r,]
+# table(x$Malware)
+
+```
+  
+### Infection Events per day  
+
+```{r,  fig.width=14, fig.height=10, echo=FALSE}
+data2<-data1[data1$Event.Date > "2015-12-31",]
+data2$Date<-as.Date(data2$Event.Date)
+data2<-tbl_df(data2)
+data2<-group_by(data2,Date,Application)
+data2<-summarise(data2,count=n())
+
+g1<-ggplot(data2, aes(x=Date,y=count))
+g1+ geom_bar(stat="identity")+
+  labs(title="PPMD Infection per day")+labs(x ="date", y = "count")+
+  theme(plot.title = element_text(size=20))+
+  theme(axis.text.x=element_text(angle=-90))+
+  theme(axis.text=element_text(size=15))+
+  scale_x_date(date_breaks= "day")
+  
+
+g1<-ggplot(data1, aes(x=Event.Date,y=Malware,col=Application))
+g1+ geom_point(alpha=0.2)+
+  geom_jitter()+
+  labs(title="Detection by Date, Malware and Application")+labs(x ="Date", y = "Malware")+
+  theme(plot.title = element_text(size=20))+
+  theme(axis.text.x=element_text(angle=-90))+
+  theme(axis.text=element_text(size=15))+
+  ##theme(legend.title = element_blank())+
+  theme(legend.text = element_text(size=10))+
+  theme(axis.title=element_text(size=15,face="bold"))
+
+g1<-ggplot(SpecMal, aes(x=Event.Date,y=Malware,col=Application))
+g1+ geom_point(alpha=0.2)+
+  geom_jitter()+
+  labs(title="Detection by Date, Ramnit and Application")+labs(x ="Date", y = "Malware")+
+  theme(plot.title = element_text(size=20))+
+  theme(axis.text.x=element_text(angle=-90))+
+  theme(axis.text=element_text(size=15))+
+  ##theme(legend.title = element_blank())+
+  theme(legend.text = element_text(size=10))+
+  theme(axis.title=element_text(size=15,face="bold"))
+
+data3<-SpecMal[SpecMal$Event.Date > "2015-12-31",]
+data3$Date<-as.Date(data3$Event.Date)
+data3<-tbl_df(data3)
+data3<-group_by(data3,Date,Application)
+data3<-summarise(data3,count=n())
+
+g1<-ggplot(data3, aes(x=Date,y=count,fill=Application))
+g1+ geom_bar(stat="identity")+
+  labs(title="PPMD Detections per day - Ramnit")+labs(x ="date", y = "count")+
+  theme(plot.title = element_text(size=20))+
+  theme(axis.text.x=element_text(angle=-90))+
+  theme(axis.text=element_text(size=15))+
+  scale_x_date(date_breaks= "day")
+ 
+```
+### PUIDs with > 1 Alerted user session 
+
+```{r,  fig.width=14, fig.height=10, echo=FALSE}
+
+write.csv(data5, file = "data5.csv") 
+table(data5$Encrypted.User.Id)
+
+```
